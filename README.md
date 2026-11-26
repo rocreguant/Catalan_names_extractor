@@ -22,8 +22,9 @@ Downloads the full Idescat **"Noms de la població"** ranking
 
 The list is downloaded once per run through the Wiktionary API. Both sides are
 compared ignoring case and accents (`MARTÍ`, `Martí` and `MARTI` all match),
-with hyphens treated as spaces and `l·l` treated as `ll`. The whole name must
-match, so `ANA ROSA` only counts if `Ana Rosa` is on the list itself.
+with hyphens treated as spaces and `l·l` treated as `ll`. A composed name
+counts only if every one of its words is on the list (or the full name is):
+`ANA ROSA` needs both `Ana` and `Rosa`, one word alone is not enough.
 Use `--wiktionary-file list.txt` to read a saved copy of the page's wikitext,
 or `--skip-wiktionary` to leave the column out.
 

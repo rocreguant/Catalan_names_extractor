@@ -65,6 +65,8 @@ Aquesta és una llista de noms propis.
 == M ==
 * [[Martí]]
 * [[Maso]]
+* [[Ana]]
+* [[Rosa]]
 * [[Màxim]]
 * [[Maximilià]]
 * [[Marcel·la]]
@@ -81,6 +83,9 @@ def test_wiktionary_matching():
     assert not any("categoria" in n for n in names)
     assert normalize_name("MARCEL·LA") == normalize_name("Marcel.la") == "marcella"
 
-    rows = [{"nom": n} for n in ["MARTÍ", "MARTI", "MAXIMILIA", "JOAN MARC", "SANTIAGO MANUEL", "MARCEL.LA"]]
+    rows = [{"nom": n} for n in [
+        "MARTÍ", "MARTI", "MAXIMILIA", "JOAN MARC", "SANTIAGO MANUEL", "MARCEL.LA",
+        "ANA ROSA", "ANA VALENTINA", "MARTÍ-MÀXIM",
+    ]]
     add_wiktionary_flag(rows, names)
-    assert [r["a_viccionari"] for r in rows] == [True, True, True, True, False, True]
+    assert [r["a_viccionari"] for r in rows] == [True, True, True, True, False, True, True, False, True]

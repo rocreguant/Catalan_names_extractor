@@ -14,7 +14,8 @@ to one CSV with two extra columns:
                     other punctuation are not counted)
     a_viccionari -> True if the name is in the Catalan Wiktionary list
                     "Viccionari:Llista de noms propis en català"
-                    (matched ignoring case and accents, see normalize_name)
+                    (matched ignoring case and accents, see normalize_name;
+                    a composed name needs every one of its words on the list)
 
 Usage:
     pip install -r requirements.txt
@@ -250,9 +251,17 @@ def scrape(start: int = 1, delay: float = 1.0, max_pages: int | None = None) -> 
 
 
 def add_wiktionary_flag(rows: list[dict], wiktionary_names: set[str]) -> None:
-    """Set 'a_viccionari' on every row (whole-name match only)."""
+    """Set 'a_viccionari' on every row.
+
+    A name counts if the whole name is on the list, or, for composed names,
+    if every one of its words is on the list ('ANA ROSA' needs both 'Ana' and
+    'Rosa'; one word alone is not enough).
+    """
     for r in rows:
-        r["a_viccionari"] = normalize_name(r["nom"]) in wiktionary_names
+        key = normalize_name(r["nom"])
+        r["a_viccionari"] = key in wiktionary_names or all(
+            w in wiktionary_names for w in key.split()
+        )
 
 
 def write_csv(rows: list[dict], path: str) -> None:

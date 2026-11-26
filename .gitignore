@@ -2,3 +2,4 @@ __pycache__/
 *.pyc
 .venv/
 noms_idescat.csv
+scrape_names.log

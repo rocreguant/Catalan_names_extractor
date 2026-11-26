@@ -89,3 +89,26 @@ def test_wiktionary_matching():
     ]]
     add_wiktionary_flag(rows, names)
     assert [r["a_viccionari"] for r in rows] == [True, True, True, True, False, True, True, False, True]
+
+
+def _page(names):
+    rows = "".join(f"<tr><td>{i}</td><td>H</td><td>{n}</td><td>9</td><td>0,1</td><td>40,0</td></tr>"
+                   for i, n in enumerate(names))
+    return ("<table><thead><tr><th>Pos.</th><th>Sexe</th><th>Nom</th><th>Rànquing freqüència</th>"
+            f"<th>‰</th><th>Edat mitjana</th></tr></thead><tbody>{rows}</tbody></table>")
+
+
+def test_scrape_starts_at_zero_and_stops_after_empty_pages():
+    from scrape_names import scrape
+
+    pages = {0: _page(["A", "B"]), 2: _page(["C", "D"]), 4: None, 6: _page(["E"]), 7: "<p></p>", 8: "<p></p>"}
+    calls = []
+
+    def fake_fetch(pos):
+        calls.append(pos)
+        return pages.get(pos, "<p></p>")
+
+    rows = scrape(start=0, delay=0, page_size=2, fetch_page=fake_fetch)
+    assert [r["nom"] for r in rows] == ["A", "B", "C", "D", "E"]
+    # 4 fails and is skipped, 7 and 8 are empty -> stop
+    assert calls == [0, 2, 4, 6, 7, 8]

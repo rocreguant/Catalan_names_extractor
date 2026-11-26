@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import logging
 import re
 import sys
 import time
@@ -38,6 +39,8 @@ from bs4 import BeautifulSoup
 BASE_URL = "https://www.idescat.cat/noms/"
 DEFAULT_PARAMS = {"var": "1", "ord": "0"}
 USER_AGENT = "Mozilla/5.0 (compatible; catalan-names-extractor/1.0)"
+
+log = logging.getLogger("scrape_names")
 
 # Output column names, in order.
 COLUMNS = [
@@ -189,12 +192,17 @@ def parse_page(html: str) -> list[dict]:
     for tr in body.find_all("tr"):
         cells = tr.find_all(["td", "th"])
         if len(cells) <= max(index.values()):
+            text = tr.get_text(" ", strip=True)
+            if text and not tr.find("th"):
+                log.warning("Skipped a row with too few cells: %r", text[:200])
             continue
         get = lambda key: cells[index[key]].get_text(" ", strip=True) if key in index else ""
         name = re.sub(r"\s+", " ", get("nom")).strip()
         if not name or _norm(name) == "nom":
             continue
         pos = get("posicio")
+        if not pos.isdigit():
+            log.warning("Row for %r has a non-numeric position %r", name, pos)
         records.append(
             {
                 "posicio": int(pos) if pos.isdigit() else pos,
@@ -210,7 +218,8 @@ def parse_page(html: str) -> list[dict]:
     return records
 
 
-def fetch(session: requests.Session, posicio: int, retries: int = 4) -> str:
+def fetch(session: requests.Session, posicio: int, retries: int = 4) -> str | None:
+    """Download one page; returns None (and logs it) if every attempt fails."""
     params = dict(DEFAULT_PARAMS, posicio=str(posicio))
     for attempt in range(retries):
         try:
@@ -220,32 +229,86 @@ def fetch(session: requests.Session, posicio: int, retries: int = 4) -> str:
             return resp.text
         except requests.RequestException as exc:
             wait = 2 ** attempt
-            print(f"  posicio={posicio}: {exc} (retrying in {wait}s)", file=sys.stderr)
+            log.warning("posicio=%s: attempt %d/%d failed: %s (retrying in %ss)",
+                        posicio, attempt + 1, retries, exc, wait)
             time.sleep(wait)
-    raise RuntimeError(f"Could not fetch posicio={posicio} after {retries} attempts")
+    log.error("posicio=%s: giving up after %d failed attempts", posicio, retries)
+    return None
 
 
-def scrape(start: int = 1, delay: float = 1.0, max_pages: int | None = None) -> list[dict]:
-    """Walk through every posicio page until no new rows appear."""
-    session = requests.Session()
-    session.headers["User-Agent"] = USER_AGENT
+def scrape(
+    start: int = 0,
+    delay: float = 1.0,
+    max_pages: int | None = None,
+    empty_pages_to_stop: int = 2,
+    page_size: int = 50,
+    max_failed_pages: int = 5,
+    fetch_page=None,
+) -> list[dict]:
+    """Walk through every posicio page, starting at `start` (0 = first name).
+
+    Stops after `empty_pages_to_stop` consecutive pages whose names table is
+    empty (or only repeats names already seen). Pages that cannot be
+    downloaded are logged and skipped; after `max_failed_pages` failures in a
+    row the scrape stops. `page_size` is only used to move past a page whose
+    size is unknown (a failed or empty page before any full page was seen).
+    """
+    if fetch_page is None:
+        session = requests.Session()
+        session.headers["User-Agent"] = USER_AGENT
+        fetch_page = lambda pos: fetch(session, pos)
 
     all_rows: list[dict] = []
     seen: set[tuple[str, str]] = set()
     posicio = start
     page = 0
+    empty_streak = 0
+    failed_streak = 0
     while max_pages is None or page < max_pages:
         page += 1
-        rows = parse_page(fetch(session, posicio))
+        html = fetch_page(posicio)
+        if html is None:
+            failed_streak += 1
+            log.error("page %d (posicio=%s) skipped: download failed", page, posicio)
+            if failed_streak >= max_failed_pages:
+                log.error("Stopping: %d pages in a row failed to download", failed_streak)
+                break
+            posicio += page_size
+            time.sleep(delay)
+            continue
+        failed_streak = 0
+
+        try:
+            rows = parse_page(html)
+        except Exception:
+            log.exception("page %d (posicio=%s): could not parse the page", page, posicio)
+            rows = []
+
         new = [r for r in rows if (r["sexe"], r["nom"]) not in seen]
         for r in new:
             seen.add((r["sexe"], r["nom"]))
         all_rows.extend(new)
-        print(f"page {page}: posicio={posicio} rows={len(rows)} new={len(new)} total={len(all_rows)}")
-        if not rows or not new:
-            break
-        # Each page starts at row `posicio`, so advance by the rows it showed.
-        posicio += len(rows)
+        log.info("page %d: posicio=%s rows=%d new=%d total=%d",
+                 page, posicio, len(rows), len(new), len(all_rows))
+
+        if rows and len(new) < len(rows):
+            log.warning("page %d (posicio=%s): %d duplicate names skipped",
+                        page, posicio, len(rows) - len(new))
+
+        if not new:
+            empty_streak += 1
+            log.warning("page %d (posicio=%s): names table empty (%d/%d before stopping)",
+                        page, posicio, empty_streak, empty_pages_to_stop)
+            if empty_streak >= empty_pages_to_stop:
+                log.info("Stopping: %d empty pages in a row", empty_streak)
+                break
+        else:
+            empty_streak = 0
+
+        if rows:
+            page_size = len(rows)
+        # Each page starts at row `posicio`, so advance by the size of a page.
+        posicio += page_size
         time.sleep(delay)
     return all_rows
 
@@ -275,30 +338,57 @@ def write_csv(rows: list[dict], path: str) -> None:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("-o", "--output", default="noms_idescat.csv", help="output CSV path")
-    parser.add_argument("--start", type=int, default=1, help="first posicio to fetch (default 1)")
+    parser.add_argument("--start", type=int, default=0, help="first posicio to fetch (default 0, the first name)")
     parser.add_argument("--delay", type=float, default=1.0, help="seconds to wait between pages")
     parser.add_argument("--max-pages", type=int, default=None, help="stop after N pages (for testing)")
     parser.add_argument("--wiktionary-file", default=None,
                         help="read the Wiktionary list from a saved wikitext file instead of the web")
     parser.add_argument("--skip-wiktionary", action="store_true",
                         help="do not add the a_viccionari column")
+    parser.add_argument("--empty-pages-to-stop", type=int, default=2,
+                        help="stop after this many empty pages in a row (default 2)")
+    parser.add_argument("--log-file", default="scrape_names.log",
+                        help="file that records progress and anything that failed (default scrape_names.log)")
     args = parser.parse_args(argv)
+
+    setup_logging(args.log_file)
+    log.info("Run started with options: %s", vars(args))
 
     wiktionary_names = None
     if not args.skip_wiktionary:
-        wiktionary_names = load_wiktionary_names(path=args.wiktionary_file)
-        print(f"Loaded {len(wiktionary_names)} names from the Wiktionary list")
+        try:
+            wiktionary_names = load_wiktionary_names(path=args.wiktionary_file)
+            log.info("Loaded %d names from the Wiktionary list", len(wiktionary_names))
+            if not wiktionary_names:
+                log.error("The Wiktionary list came back empty; a_viccionari will be False everywhere")
+        except Exception:
+            log.exception("Could not load the Wiktionary list; the a_viccionari column will be left out")
 
-    rows = scrape(start=args.start, delay=args.delay, max_pages=args.max_pages)
+    rows = scrape(start=args.start, delay=args.delay, max_pages=args.max_pages,
+                  empty_pages_to_stop=args.empty_pages_to_stop)
     if not rows:
-        print("No rows found. The page layout may have changed.", file=sys.stderr)
+        log.error("No rows found. The page layout may have changed.")
         return 1
     if wiktionary_names is not None:
         add_wiktionary_flag(rows, wiktionary_names)
-        print(f"{sum(r['a_viccionari'] for r in rows)} of {len(rows)} names are in the Wiktionary list")
+        log.info("%d of %d names are in the Wiktionary list",
+                 sum(r["a_viccionari"] for r in rows), len(rows))
     write_csv(rows, args.output)
-    print(f"Saved {len(rows)} names to {args.output}")
+    log.info("Saved %d names to %s", len(rows), args.output)
     return 0
+
+
+def setup_logging(log_file: str) -> None:
+    """Log progress to the console, and everything (with warnings/errors) to `log_file`."""
+    log.setLevel(logging.INFO)
+    log.handlers.clear()
+    fmt = logging.Formatter("%(asctime)s %(levelname)s %(message)s")
+    console = logging.StreamHandler()
+    console.setFormatter(fmt)
+    log.addHandler(console)
+    file_handler = logging.FileHandler(log_file, mode="w", encoding="utf-8")
+    file_handler.setFormatter(fmt)
+    log.addHandler(file_handler)
 
 
 if __name__ == "__main__":

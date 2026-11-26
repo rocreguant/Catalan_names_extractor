@@ -37,9 +37,15 @@ python scrape_names.py --max-pages 2           # quick check on the first 2 page
 python scrape_names.py -o noms.csv --delay 2   # custom output and politer pacing
 ```
 
-The script starts at `posicio=1`, advances by the number of rows each page
-shows, skips duplicates, and stops when a page returns no new names. It
-waits `--delay` seconds between requests (default 1 s).
+The script starts at `posicio=0` (the first name), advances by the number of
+rows each page shows, and skips duplicates. It stops after 2 pages in a row
+whose names table is empty (change with `--empty-pages-to-stop`). It waits
+`--delay` seconds between requests (default 1 s).
+
+Everything is logged to `scrape_names.log` (change with `--log-file`):
+progress per page, plus warnings and errors for pages that failed to
+download (retried 4 times, then skipped), empty pages, duplicate names,
+malformed rows and problems loading the Wiktionary list.
 
 The CSV is written as UTF-8 with BOM so Excel shows accents correctly.
 

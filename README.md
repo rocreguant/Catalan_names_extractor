@@ -18,6 +18,10 @@ Downloads the full Idescat **"Noms de la població"** ranking
 | `num_lletres` | number of letters in the name; spaces, hyphens, apostrophes and `·` are not counted |
 | `a_viccionari` | `True` if the name is in the Catalan Wiktionary [Llista de noms propis en català](https://ca.wiktionary.org/wiki/Viccionari:Llista_de_noms_propis_en_català) |
 
+A `/` separates different spellings of the same name (e.g. `MARIA/MARÍA`).
+`nom` keeps the full text, while `compost` and `num_lletres` are computed from
+the first spelling only (`MARIA/MARÍA` has 5 letters).
+
 ### How the Wiktionary match works
 
 The list is downloaded once per run through the Wiktionary API. Both sides are
@@ -25,6 +29,7 @@ compared ignoring case and accents (`MARTÍ`, `Martí` and `MARTI` all match),
 with hyphens treated as spaces and `l·l` treated as `ll`. A composed name
 counts only if every one of its words is on the list (or the full name is):
 `ANA ROSA` needs both `Ana` and `Rosa`, one word alone is not enough.
+For names with `/`, it is enough for any one spelling to match.
 Use `--wiktionary-file list.txt` to read a saved copy of the page's wikitext,
 or `--skip-wiktionary` to leave the column out.
 

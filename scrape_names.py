@@ -7,7 +7,8 @@ Source pages look like:
 Each page shows a slice of the ranking table with the columns
 Pos., Sexe, Nom, Rànquing freqüència, ‰ and Edat mitjana.
 This script walks every ``posicio`` page, collects all rows, and writes them
-to one CSV with two extra columns:
+to one CSV with three extra columns. A "/" separates spellings of the same name
+(e.g. "MARIA/MARÍA"); compost and num_lletres use the first spelling only.
 
     compost      -> True if the name has two or more words (e.g. "ANA ROSA")
     num_lletres  -> number of letters in the name (spaces, hyphens and
@@ -15,7 +16,8 @@ to one CSV with two extra columns:
     a_viccionari -> True if the name is in the Catalan Wiktionary list
                     "Viccionari:Llista de noms propis en català"
                     (matched ignoring case and accents, see normalize_name;
-                    a composed name needs every one of its words on the list)
+                    a composed name needs every one of its words on the list;
+                    any one of the "/" spellings is enough)
 
 Usage:
     pip install -r requirements.txt
@@ -92,14 +94,23 @@ def parse_number(text: str) -> float | int | None:
     return int(value) if value.is_integer() and "." not in text else value
 
 
+def spellings(name: str) -> list[str]:
+    """Split 'MARIA/MARÍA' into its spellings; '/' separates variants of one name."""
+    return [s.strip() for s in name.split("/") if s.strip()]
+
+
+def first_spelling(name: str) -> str:
+    return next(iter(spellings(name)), "")
+
+
 def is_composed(name: str) -> bool:
-    """True if the name has two or more words, e.g. 'ANA ROSA' or 'JOAN-MARC'."""
-    return len([w for w in re.split(r"[\s\-]+", name.strip()) if w]) >= 2
+    """True if the first spelling has two or more words, e.g. 'ANA ROSA' or 'JOAN-MARC'."""
+    return len([w for w in re.split(r"[\s\-]+", first_spelling(name)) if w]) >= 2
 
 
 def count_letters(name: str) -> int:
-    """Number of letters in the name, ignoring spaces, hyphens, apostrophes, '·'."""
-    return sum(1 for c in name if c.isalpha())
+    """Letters in the first spelling, ignoring spaces, hyphens, apostrophes, '·'."""
+    return sum(1 for c in first_spelling(name) if c.isalpha())
 
 
 def normalize_name(name: str) -> str:
@@ -316,14 +327,15 @@ def scrape(
 def add_wiktionary_flag(rows: list[dict], wiktionary_names: set[str]) -> None:
     """Set 'a_viccionari' on every row.
 
-    A name counts if the whole name is on the list, or, for composed names,
-    if every one of its words is on the list ('ANA ROSA' needs both 'Ana' and
-    'Rosa'; one word alone is not enough).
+    A name counts if any of its '/' spellings matches: the whole spelling is on
+    the list, or, for composed names, every one of its words is ('ANA ROSA'
+    needs both 'Ana' and 'Rosa'; one word alone is not enough).
     """
     for r in rows:
-        key = normalize_name(r["nom"])
-        r["a_viccionari"] = key in wiktionary_names or all(
-            w in wiktionary_names for w in key.split()
+        keys = [normalize_name(s) for s in spellings(r["nom"])]
+        r["a_viccionari"] = any(
+            key in wiktionary_names or all(w in wiktionary_names for w in key.split())
+            for key in keys
         )
 
 

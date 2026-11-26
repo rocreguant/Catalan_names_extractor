@@ -56,6 +56,19 @@ def test_helpers():
     assert count_letters("GEMMA·L") == 6
 
 
+def test_slash_spellings():
+    from scrape_names import add_wiktionary_flag
+
+    assert count_letters("MARIA/MARÍA") == 5
+    assert count_letters("MARIA TERESA/MARÍA TERESA") == 11
+    assert not is_composed("MARIA/MARÍA")
+    assert is_composed("MARIA TERESA/MARÍA TERESA")
+
+    rows = [{"nom": "MARIA/MARÍA"}, {"nom": "ELENA/HELENA"}, {"nom": "PAU/POL"}]
+    add_wiktionary_flag(rows, {"maria", "helena"})
+    assert [r["a_viccionari"] for r in rows] == [True, True, False]
+
+
 def test_no_table():
     assert parse_page("<html><body><p>res</p></body></html>") == []
 

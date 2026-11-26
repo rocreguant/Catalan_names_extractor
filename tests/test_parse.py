@@ -58,3 +58,29 @@ def test_helpers():
 
 def test_no_table():
     assert parse_page("<html><body><p>res</p></body></html>") == []
+
+
+WIKITEXT = """
+Aquesta és una llista de noms propis.
+== M ==
+* [[Martí]]
+* [[Maso]]
+* [[Màxim]]
+* [[Maximilià]]
+* [[Marcel·la]]
+* [[Joan Marc|Joan-Marc]]
+* [[Categoria:Noms]]
+"""
+
+
+def test_wiktionary_matching():
+    from scrape_names import add_wiktionary_flag, normalize_name, parse_wiktionary_wikitext
+
+    names = parse_wiktionary_wikitext(WIKITEXT)
+    assert "marti" in names and "maxim" in names and "marcella" in names
+    assert not any("categoria" in n for n in names)
+    assert normalize_name("MARCEL·LA") == normalize_name("Marcel.la") == "marcella"
+
+    rows = [{"nom": n} for n in ["MARTÍ", "MARTI", "MAXIMILIA", "JOAN MARC", "SANTIAGO MANUEL", "MARCEL.LA"]]
+    add_wiktionary_flag(rows, names)
+    assert [r["a_viccionari"] for r in rows] == [True, True, True, True, False, True]

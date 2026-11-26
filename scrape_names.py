@@ -12,6 +12,9 @@ to one CSV with two extra columns:
     compost      -> True if the name has two or more words (e.g. "ANA ROSA")
     num_lletres  -> number of letters in the name (spaces, hyphens and
                     other punctuation are not counted)
+    a_viccionari -> True if the name is in the Catalan Wiktionary list
+                    "Viccionari:Llista de noms propis en català"
+                    (matched ignoring case and accents, see normalize_name)
 
 Usage:
     pip install -r requirements.txt
@@ -45,7 +48,11 @@ COLUMNS = [
     "edat_mitjana",
     "compost",
     "num_lletres",
+    "a_viccionari",
 ]
+
+WIKTIONARY_API = "https://ca.wiktionary.org/w/api.php"
+WIKTIONARY_PAGE = "Viccionari:Llista de noms propis en català"
 
 # Map from (normalized) header text on the page to our column name.
 HEADER_MAP = {
@@ -89,6 +96,59 @@ def is_composed(name: str) -> bool:
 def count_letters(name: str) -> int:
     """Number of letters in the name, ignoring spaces, hyphens, apostrophes, '·'."""
     return sum(1 for c in name if c.isalpha())
+
+
+def normalize_name(name: str) -> str:
+    """Key used to compare Idescat names with the Wiktionary list.
+
+    Case-insensitive and accent-insensitive: 'MARTÍ', 'Martí' and 'MARTI' all
+    become 'marti'. Hyphens become spaces, the Catalan 'l·l' (or 'l.l') becomes
+    'll', apostrophes are dropped and repeated spaces are collapsed.
+    """
+    text = unicodedata.normalize("NFKD", name)
+    text = "".join(c for c in text if not unicodedata.combining(c)).casefold()
+    text = re.sub(r"l[·.\u2027\u0387]l", "ll", text)
+    text = re.sub(r"['’`]", "", text)
+    text = re.sub(r"[\s\-]+", " ", text)
+    return text.strip()
+
+
+def parse_wiktionary_wikitext(wikitext: str) -> set[str]:
+    """Pull the names out of the bulleted lines of the Wiktionary page's wikitext."""
+    names = set()
+    for line in wikitext.splitlines():
+        line = line.strip()
+        if not line.startswith("*"):
+            continue
+        item = line.lstrip("*#: ").strip()
+        links = re.findall(r"\[\[([^\]|#]+)(?:#[^\]|]*)?(?:\|([^\]]+))?\]\]", item)
+        if links:
+            candidates = [text or target for target, text in links]
+        else:
+            candidates = [re.sub(r"<[^>]+>|'{2,}|\{\{[^}]*\}\}", "", item)]
+        for c in candidates:
+            c = c.strip()
+            if c and ":" not in c:
+                names.add(normalize_name(c))
+    names.discard("")
+    return names
+
+
+def load_wiktionary_names(session: requests.Session | None = None, path: str | None = None) -> set[str]:
+    """Load the Wiktionary list, from a local wikitext file or from the live wiki."""
+    if path:
+        with open(path, encoding="utf-8") as f:
+            return parse_wiktionary_wikitext(f.read())
+    session = session or requests.Session()
+    resp = session.get(
+        WIKTIONARY_API,
+        params={"action": "parse", "page": WIKTIONARY_PAGE, "prop": "wikitext",
+                "format": "json", "formatversion": "2"},
+        headers={"User-Agent": USER_AGENT},
+        timeout=60,
+    )
+    resp.raise_for_status()
+    return parse_wiktionary_wikitext(resp.json()["parse"]["wikitext"])
 
 
 def find_names_table(soup: BeautifulSoup):
@@ -189,9 +249,16 @@ def scrape(start: int = 1, delay: float = 1.0, max_pages: int | None = None) -> 
     return all_rows
 
 
+def add_wiktionary_flag(rows: list[dict], wiktionary_names: set[str]) -> None:
+    """Set 'a_viccionari' on every row (whole-name match only)."""
+    for r in rows:
+        r["a_viccionari"] = normalize_name(r["nom"]) in wiktionary_names
+
+
 def write_csv(rows: list[dict], path: str) -> None:
     with open(path, "w", newline="", encoding="utf-8-sig") as f:
-        writer = csv.DictWriter(f, fieldnames=COLUMNS)
+        fields = [c for c in COLUMNS if any(c in r for r in rows)]
+        writer = csv.DictWriter(f, fieldnames=fields)
         writer.writeheader()
         writer.writerows(rows)
 
@@ -202,12 +269,24 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--start", type=int, default=1, help="first posicio to fetch (default 1)")
     parser.add_argument("--delay", type=float, default=1.0, help="seconds to wait between pages")
     parser.add_argument("--max-pages", type=int, default=None, help="stop after N pages (for testing)")
+    parser.add_argument("--wiktionary-file", default=None,
+                        help="read the Wiktionary list from a saved wikitext file instead of the web")
+    parser.add_argument("--skip-wiktionary", action="store_true",
+                        help="do not add the a_viccionari column")
     args = parser.parse_args(argv)
+
+    wiktionary_names = None
+    if not args.skip_wiktionary:
+        wiktionary_names = load_wiktionary_names(path=args.wiktionary_file)
+        print(f"Loaded {len(wiktionary_names)} names from the Wiktionary list")
 
     rows = scrape(start=args.start, delay=args.delay, max_pages=args.max_pages)
     if not rows:
         print("No rows found. The page layout may have changed.", file=sys.stderr)
         return 1
+    if wiktionary_names is not None:
+        add_wiktionary_flag(rows, wiktionary_names)
+        print(f"{sum(r['a_viccionari'] for r in rows)} of {len(rows)} names are in the Wiktionary list")
     write_csv(rows, args.output)
     print(f"Saved {len(rows)} names to {args.output}")
     return 0

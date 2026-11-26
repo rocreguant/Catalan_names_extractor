@@ -1,0 +1,40 @@
+# Catalan names extractor
+
+Downloads the full Idescat **"Noms de la població"** ranking
+(`https://www.idescat.cat/noms/?var=1&ord=0&posicio=N`) by walking every
+`posicio` page, and saves it into one CSV file.
+
+## Output columns
+
+| column | source |
+|---|---|
+| `posicio` | Pos. |
+| `sexe` | Sexe (H = home, D = dona) |
+| `nom` | Nom |
+| `frequencia` | Rànquing freqüència |
+| `per_mil` | ‰ |
+| `edat_mitjana` | Edat mitjana |
+| `compost` | `True` if the name has two or more words (split on spaces or hyphens), e.g. `ANA ROSA` |
+| `num_lletres` | number of letters in the name; spaces, hyphens, apostrophes and `·` are not counted |
+
+## Usage
+
+```bash
+pip install -r requirements.txt
+python scrape_names.py                         # writes noms_idescat.csv
+python scrape_names.py --max-pages 2           # quick check on the first 2 pages
+python scrape_names.py -o noms.csv --delay 2   # custom output and politer pacing
+```
+
+The script starts at `posicio=1`, advances by the number of rows each page
+shows, skips duplicates, and stops when a page returns no new names. It
+waits `--delay` seconds between requests (default 1 s).
+
+The CSV is written as UTF-8 with BOM so Excel shows accents correctly.
+
+## Tests
+
+```bash
+pip install pytest
+pytest tests
+```

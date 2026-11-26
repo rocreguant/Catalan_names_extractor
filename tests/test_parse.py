@@ -1,0 +1,60 @@
+"""Offline tests for the parser, using a small HTML sample shaped like the Idescat table.
+
+The sample is hand-written from a screenshot of the page, not a saved copy of it.
+"""
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from scrape_names import count_letters, is_composed, parse_number, parse_page  # noqa: E402
+
+SAMPLE = """
+<html><body>
+<table>
+  <caption>Noms de la població. Catalunya. 2025</caption>
+  <thead>
+    <tr><th>Pos. ⇅</th><th>Sexe ⇅</th><th>Nom ⇅</th>
+        <th>Rànquing freqüència</th><th>‰</th><th>Edat mitjana</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>04958</td><td>H</td><td><a href="#">SANTIAGO MANUEL</a></td><td>75</td><td>0,00</td><td>44,6</td></tr>
+    <tr><td>04958</td><td>D</td><td><a href="#">SARA VALENTINA</a></td><td>75</td><td>0,00</td><td>15,9</td></tr>
+    <tr><td>04958</td><td>D</td><td><a href="#">SILVERIA</a></td><td>75</td><td>0,00</td><td>70,2</td></tr>
+    <tr><td>00001</td><td>H</td><td><a href="#">ANTONIO</a></td><td>1.234</td><td>12,34</td><td>55,0</td></tr>
+  </tbody>
+</table>
+</body></html>
+"""
+
+
+def test_parse_page():
+    rows = parse_page(SAMPLE)
+    assert len(rows) == 4
+    first = rows[0]
+    assert first["posicio"] == 4958
+    assert first["sexe"] == "H"
+    assert first["nom"] == "SANTIAGO MANUEL"
+    assert first["frequencia"] == 75
+    assert first["per_mil"] == 0.0
+    assert first["edat_mitjana"] == 44.6
+    assert first["compost"] is True
+    assert first["num_lletres"] == 14
+    assert rows[2]["compost"] is False
+    assert rows[3]["frequencia"] == 1234
+
+
+def test_helpers():
+    assert parse_number("1.234") == 1234
+    assert parse_number("44,6") == 44.6
+    assert parse_number("") is None
+    assert is_composed("ANA ROSA")
+    assert is_composed("JOAN-MARC")
+    assert not is_composed("PAU")
+    assert count_letters("ANA ROSA") == 7
+    assert count_letters("MARIA DELS ÀNGELS") == 15
+    assert count_letters("GEMMA·L") == 6
+
+
+def test_no_table():
+    assert parse_page("<html><body><p>res</p></body></html>") == []
